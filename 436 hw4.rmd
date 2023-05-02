@@ -1,0 +1,181 @@
+---
+title: "stat 436 hw 5"
+output: html_document
+date: "2023-04-28"
+---
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(topicmodels)
+library(tm)
+library(shiny)
+library(superheat)
+library(ggplot2)
+library(tidyr)
+library(viridis)
+library(stringr)
+library(SnowballC)
+```
+
+
+
+```{r}
+# Load Yelp data
+yelp_data = read_csv("https://github.com/ywang2687/text-clustering/raw/main/yelp.csv")
+```
+
+```{r}
+reviews_dtm = yelp_data %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word") %>%
+  count(review_id , word, sort = TRUE) %>%
+  cast_dtm(review_id , word, n)
+reviews_dtm
+```
+
+```{r}
+lda_model = LDA(reviews_dtm, k = 6)
+
+```
+
+```{r}
+document_topics = tidy(lda_model, matrix = "gamma")
+```
+
+```{r}
+yelp_data = yelp_data %>%
+  left_join(
+    document_topics %>%
+      group_by(document) %>%
+      top_n(1, gamma) %>%
+      ungroup() %>%
+      select(document, topic),
+    by = c("review_id" = "document")
+  )
+yelp_data = na.omit(yelp_data)
+yelp_data
+```
+
+
+```{r}
+word_topic_freq = yelp_data %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word") %>%
+  count(topic, word) %>%
+  arrange(topic, desc(n))
+word_topic_freq
+```
+
+
+
+```{r}
+topic_rating_proportion = yelp_data %>%
+  count(stars, topic) %>%
+  group_by(stars) %>%
+  mutate(proportion = n / sum(n)) %>%
+  ungroup()
+topic_rating_proportion
+```
+
+```{r}
+word_topic_probs <- tidy(lda_model, matrix = "beta")
+
+top_terms <- word_topic_probs %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 15) %>%
+  ungroup() %>%
+  mutate(term = reorder_within(term, beta, topic))
+
+ggplot(top_terms, aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_fill_brewer(palette = "Set2") +
+  scale_y_reordered() +
+  labs(title = "Most Probable Words per Topic",
+       x = "Probability",
+       y = "Term") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+
+```{r}
+ggplot(topic_rating_proportion, aes(x = factor(topic), y = factor(stars), fill = proportion)) +
+  geom_tile() +
+  scale_fill_viridis(name = "Proportion", option = "viridis") +
+  labs(x = "Topic", y = "Rating", title = "Proportion of Each Topic Within Each Rating") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+ yelp_data %>%
+  group_by(topic) %>%
+  summarize(mean_stars = mean(stars))%>%
+ ggplot( aes(x = factor(topic), y = mean_stars, fill = factor(topic))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  labs(title = "Mean Star for Each Topic",
+       x = "Topic",
+       y = "Mean Star") +
+  theme_minimal()
+```
+
+
+
+
+```{r}
+word_topic_rating_freq = yelp_data %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word") %>%
+  count(topic, stars, word) %>%
+  arrange(topic, stars, desc(n))
+word_topic_rating_freq
+```
+
+
+
+
+
+```{r}
+ui = fluidPage(
+  titlePanel("Top Frequent Words by Topic and Rating"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("rating", "Choose rating:", choices = c(1,2,3,4,5)),
+      selectInput("topic", "Choose topic:", choices = unique(word_topic_rating_freq$topic))
+    ),
+    mainPanel(
+      plotOutput("bar_plot")
+    )
+  )
+)
+server = function(input, output) {
+  output$bar_plot = renderPlot({
+    word_topic_rating_freq %>%
+      filter(stars == input$rating, topic == input$topic) %>%
+      top_n(50, n) %>%
+      ggplot(aes(x = reorder(word, n), y = n, fill = factor(topic))) +
+      geom_col(show.legend = FALSE) +
+      labs(x = "Word", y = "Frequency", title = paste("Top 50 Frequent Words for Topic", input$topic, "and Rating", input$rating)) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
